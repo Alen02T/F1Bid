@@ -22,6 +22,7 @@ public class CarreraController : ControllerBase
         };
 
         MotorCarrera motor = new();
-        return Ok(motor.Simular(carrera));
+        motor.Simular(carrera);
+        return Ok(carrera);
     }
 }
