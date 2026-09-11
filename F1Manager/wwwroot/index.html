@@ -15,16 +15,20 @@
 
     <table>
         <thead>
-            <tr>
-                <th>Posición</th>
-                <th>Piloto</th>
-                <th>Última vuelta</th>
-                <th>Tiempo total</th>
-            </tr>
+        <th>Evento</th>
+        <tr>
+            <th>Posición</th>
+            <th>Piloto</th>
+            <th>Última vuelta</th>
+            <th>Tiempo total</th>
+            <th>Ultimo Evento</th>
+        </tr>
         </thead>
 
         <tbody id="clasificacion"></tbody>
     </table>
+
+    <p id="vueltaRapida">Vuelta rápida: -</p>
 
     <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
 
@@ -34,6 +38,11 @@
             .build();
 
         connection.on("VueltaCompletada", carrera => {
+
+            document.getElementById("vueltaRapida").textContent =
+                `Vuelta rápida: ${carrera.pilotoVueltaRapida} - 
+${carrera.tiempoVueltaRapida.toFixed(3)} s`;
+
             document.getElementById("vuelta").textContent =
                 "Vuelta: " + carrera.vueltaActual;
 
@@ -44,13 +53,15 @@
                 .sort((a, b) => a.posicion - b.posicion)
                 .forEach(piloto => {
                     tabla.innerHTML += `
-                <tr>
-                    <td>${piloto.posicion}</td>
-                    <td>${piloto.nombre}</td>
-                    <td>${piloto.tiempoUltimaVuelta.toFixed(3)} s</td>
-                    <td>${piloto.tiempoTotal.toFixed(3)} s</td>
-                </tr>
-            `;
+        <tr>
+            <td>${piloto.posicion}</td>
+            <td>${piloto.nombre}</td>
+            <td>${piloto.tiempoUltimaVuelta.toFixed(3)} s</td>
+            <td>${piloto.tiempoTotal.toFixed(3)} s</td>
+            <td>${piloto.ultimoEvento || "-"}</td>
+        </tr>
+`
+                        ;
                 });
         });
 
@@ -62,6 +73,8 @@
         document.getElementById("simular").addEventListener("click", () => {
             fetch("/api/carrera/simular");
         });
+
+        
     </script>
 </body>
 </html>
