@@ -1,0 +1,67 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>F1 Manager</title>
+</head>
+<body>
+    <h1>F1 Manager</h1>
+
+    <button id="simular" disabled>Simular carrera</button>
+
+    <pre id="resultado">Conectando...</pre>
+
+    <h2 id="vuelta">Vuelta: 0</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Posición</th>
+                <th>Piloto</th>
+                <th>Última vuelta</th>
+                <th>Tiempo total</th>
+            </tr>
+        </thead>
+
+        <tbody id="clasificacion"></tbody>
+    </table>
+
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+
+    <script>
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/carreraHub")
+            .build();
+
+        connection.on("VueltaCompletada", carrera => {
+            document.getElementById("vuelta").textContent =
+                "Vuelta: " + carrera.vueltaActual;
+
+            const tabla = document.getElementById("clasificacion");
+            tabla.innerHTML = "";
+
+            carrera.pilotos
+                .sort((a, b) => a.posicion - b.posicion)
+                .forEach(piloto => {
+                    tabla.innerHTML += `
+                <tr>
+                    <td>${piloto.posicion}</td>
+                    <td>${piloto.nombre}</td>
+                    <td>${piloto.tiempoUltimaVuelta.toFixed(3)} s</td>
+                    <td>${piloto.tiempoTotal.toFixed(3)} s</td>
+                </tr>
+            `;
+                });
+        });
+
+        connection.start().then(() => {
+            document.getElementById("resultado").textContent = "Conectado";
+            document.getElementById("simular").disabled = false;
+        });
+
+        document.getElementById("simular").addEventListener("click", () => {
+            fetch("/api/carrera/simular");
+        });
+    </script>
+</body>
+</html>
