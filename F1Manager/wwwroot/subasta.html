@@ -1,0 +1,132 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Subasta F1</title>
+</head>
+<body>
+    <h1>Subasta</h1>
+    <button id="crearSala">Crear sala</button>
+
+    <input id="codigo" placeholder="Código de sala">
+
+    <input id="nombre" placeholder="Nombre del manager">
+
+    <button id="entrar">Entrar en la sala</button>
+
+    <p id="estado">Sin conectar</p>
+    <p id="puja">Puja actual: -</p>
+
+    <h2>Managers</h2>
+    <ul id="managers"></ul>
+
+    <button id="iniciarSubasta" disabled>
+        Iniciar subasta
+    </button>
+
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+
+    <script>
+        let managerId = null;
+
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/salaHub")
+            .build();
+
+        connection.on("ManagersActualizados", managers => {
+            const lista = document.getElementById("managers");
+            lista.innerHTML = "";
+
+            managers.forEach(manager => {
+                lista.innerHTML += `<li>${manager.nombre}</li>`;
+            });
+        });
+
+      
+
+        document.getElementById("iniciarSubasta")
+            .addEventListener("click", async () => {
+                const codigo =
+                    document.getElementById("codigo").value;
+
+                document.getElementById("iniciarSubasta").disabled = true;
+
+                const respuesta = await fetch(
+                    `/api/Sala/${codigo}/subasta/iniciar`,
+                    { method: "POST" }
+                );
+
+                if (!respuesta.ok) {
+                    const error = await respuesta.text();
+                    alert(error);
+                }
+
+                document.getElementById("iniciarSubasta").disabled = false;
+            });
+
+        connection.on("SubastaSinPujas", () => {
+            document.getElementById("puja").textContent =
+                "La subasta terminó sin pujas";
+        });
+
+        connection.on("SubastaIniciada", subasta => {
+            document.getElementById("puja").textContent =
+                `Se subasta: ${subasta.pilotoActual.nombre} | Puja: 0 millones`;
+        });
+
+        connection.on("PujaActualizada", subasta => {
+            document.getElementById("puja").textContent =
+                `Se subasta: ${subasta.pilotoActual.nombre} | Puja: ${subasta.pujaActual} millones`;
+        });
+
+        connection.on("SubastaFinalizada", resultado => {
+            document.getElementById("puja").textContent =
+                `${resultado.ganador} consigue a ${resultado.piloto} por ${resultado.precio} millones`;
+        });
+
+        document.getElementById("crearSala").addEventListener("click", async () => {
+            const respuesta = await fetch("/api/Sala/crear", {
+                method: "POST"
+            });
+
+            const sala = await respuesta.json();
+
+            document.getElementById("codigo").value = sala.codigo;
+            document.getElementById("estado").textContent =
+                `Sala creada: ${sala.codigo}. Introduce tu nombre y entra.`;
+        });
+
+        document.getElementById("entrar").addEventListener("click", async () => {
+            const codigo = document.getElementById("codigo").value;
+            const nombre = document.getElementById("nombre").value;
+
+            await connection.start();
+            await connection.invoke("UnirseSala", codigo);
+
+            const respuesta = await fetch(
+                `/api/Sala/${codigo}/entrar?nombre=${encodeURIComponent(nombre)}`,
+                { method: "POST" }
+            );
+
+            if (!respuesta.ok) {
+                document.getElementById("estado").textContent =
+                    "No se pudo entrar en la sala";
+                return;
+            }
+
+
+            const manager = await respuesta.json();
+            managerId = manager.id;
+            document.getElementById("iniciarSubasta").disabled = false;
+
+            document.getElementById("estado").textContent =
+                `${manager.nombre} conectado a la sala ${codigo}`;
+        });
+
+        connection.on("CronometroActualizado", segundos => {
+            document.getElementById("estado").textContent =
+                `Tiempo restante: ${segundos} segundos`;
+        });
+    </script>
+</body>
+</html>
