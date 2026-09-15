@@ -14,8 +14,8 @@ public class SalaController : ControllerBase
     private readonly IHubContext<SalaHub> _salaHub;
 
     public SalaController(
-     SalaService salaService,
-     IHubContext<SalaHub> salaHub)
+        SalaService salaService,
+        IHubContext<SalaHub> salaHub)
     {
         _salaService = salaService;
         _salaHub = salaHub;
@@ -31,8 +31,8 @@ public class SalaController : ControllerBase
 
     [HttpPost("{codigo}/entrar")]
     public async Task<IActionResult> EntrarSala(
-    string codigo,
-    string nombre)
+        string codigo,
+        string nombre)
     {
         var sala = _salaService.ObtenerSala(codigo);
 
@@ -50,8 +50,8 @@ public class SalaController : ControllerBase
         sala.Managers.Add(manager);
 
         await _salaHub.Clients
-    .Group(codigo.ToUpper())
-    .SendAsync("ManagersActualizados", sala.Managers);
+            .Group(codigo.ToUpper())
+            .SendAsync("ManagersActualizados", sala.Managers);
 
         return Ok(manager);
     }
@@ -101,7 +101,7 @@ public class SalaController : ControllerBase
             .SendAsync("SubastaIniciada", sala.Subasta);
 
         while (sala.Subasta.SegundosRestantes > 0 &&
-       sala.Subasta.Activa)
+               sala.Subasta.Activa)
         {
             await Task.Delay(1000);
 
@@ -113,6 +113,9 @@ public class SalaController : ControllerBase
                     "CronometroActualizado",
                     sala.Subasta.SegundosRestantes);
         }
+
+        if (!sala.Subasta.Activa)
+            return Ok(sala);
 
         if (sala.Subasta.ManagerGanadorId == null)
         {
@@ -130,9 +133,9 @@ public class SalaController : ControllerBase
 
     [HttpPost("{codigo}/subasta/pujar")]
     public async Task<IActionResult> Pujar(
-      string codigo,
-      Guid managerId,
-      int cantidad)
+        string codigo,
+        Guid managerId,
+        int cantidad)
     {
         var sala = _salaService.ObtenerSala(codigo);
 
@@ -178,29 +181,34 @@ public class SalaController : ControllerBase
         if (sala.Subasta.ManagerGanadorId == null)
             return BadRequest("Todavía no se ha realizado ninguna puja.");
 
-        var ganador = sala.Managers.FirstOrDefault(
-            m => m.Id == sala.Subasta.ManagerGanadorId);
+        var ganador = sala.Managers
+            .FirstOrDefault(m =>
+                m.Id == sala.Subasta.ManagerGanadorId);
 
-        if (ganador == null || sala.Subasta.PilotoActual == null)
+        if (ganador == null ||
+            sala.Subasta.PilotoActual == null)
+        {
             return BadRequest("No se pudo determinar el ganador.");
+        }
 
         ganador.Presupuesto -= sala.Subasta.PujaActual;
         ganador.Pilotos.Add(sala.Subasta.PilotoActual);
 
         sala.PilotosDisponibles.Remove(
-    sala.Subasta.PilotoActual);
+            sala.Subasta.PilotoActual);
 
         sala.Subasta.Activa = false;
+
         await _salaHub.Clients
-    .Group(codigo.ToUpper())
-    .SendAsync("SubastaFinalizada", new
-    {
-        Piloto = sala.Subasta.PilotoActual.Nombre,
-        Ganador = ganador.Nombre,
-        Precio = sala.Subasta.PujaActual
-    });
+            .Group(codigo.ToUpper())
+            .SendAsync("SubastaFinalizada", new
+            {
+                Piloto = sala.Subasta.PilotoActual.Nombre,
+                Ganador = ganador.Nombre,
+                Precio = sala.Subasta.PujaActual,
+                PresupuestoRestante = ganador.Presupuesto
+            });
+
         return Ok(sala);
     }
-
-
 }

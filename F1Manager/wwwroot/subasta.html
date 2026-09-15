@@ -6,16 +6,17 @@
 </head>
 <body>
     <h1>Subasta</h1>
+
     <button id="crearSala">Crear sala</button>
 
     <input id="codigo" placeholder="Código de sala">
-
     <input id="nombre" placeholder="Nombre del manager">
 
     <button id="entrar">Entrar en la sala</button>
 
     <p id="estado">Sin conectar</p>
     <p id="puja">Puja actual: -</p>
+    <p id="presupuesto">Presupuesto: -</p>
 
     <h2>Managers</h2>
     <ul id="managers"></ul>
@@ -24,10 +25,23 @@
         Iniciar subasta
     </button>
 
+    <br><br>
+
+    <input id="cantidad"
+           type="number"
+           placeholder="Cantidad de la puja"
+           disabled>
+
+    <button id="pujar" disabled>
+        Pujar
+    </button>
+
     <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
 
     <script>
         let managerId = null;
+        let nombreManager = "";
+        let conectado = false;
 
         const connection = new signalR.HubConnectionBuilder()
             .withUrl("/salaHub")
@@ -42,14 +56,105 @@
             });
         });
 
-      
+        connection.on("SubastaIniciada", subasta => {
+            document.getElementById("puja").textContent =
+                `Se subasta: ${subasta.pilotoActual.nombre} | Puja: 0 millones`;
+
+            document.getElementById("cantidad").disabled = false;
+            document.getElementById("pujar").disabled = false;
+            document.getElementById("iniciarSubasta").disabled = true;
+        });
+
+        connection.on("PujaActualizada", subasta => {
+            document.getElementById("puja").textContent =
+                `Se subasta: ${subasta.pilotoActual.nombre} | Puja: ${subasta.pujaActual} millones`;
+        });
+
+        connection.on("CronometroActualizado", segundos => {
+            document.getElementById("estado").textContent =
+                `Tiempo restante: ${segundos} segundos`;
+        });
+
+        connection.on("SubastaSinPujas", () => {
+            document.getElementById("puja").textContent =
+                "La subasta terminó sin pujas";
+
+            document.getElementById("cantidad").disabled = true;
+            document.getElementById("pujar").disabled = true;
+            document.getElementById("iniciarSubasta").disabled = false;
+        });
+
+        connection.on("SubastaFinalizada", resultado => {
+            document.getElementById("puja").textContent =
+                `${resultado.ganador} consigue a ${resultado.piloto} por ${resultado.precio} millones`;
+
+            if (resultado.ganador === nombreManager) {
+                document.getElementById("presupuesto").textContent =
+                    `Presupuesto restante: ${resultado.presupuestoRestante} millones`;
+            }
+
+            document.getElementById("cantidad").disabled = true;
+            document.getElementById("pujar").disabled = true;
+            document.getElementById("iniciarSubasta").disabled = false;
+        });
+
+        document.getElementById("crearSala")
+            .addEventListener("click", async () => {
+                const respuesta = await fetch("/api/Sala/crear", {
+                    method: "POST"
+                });
+
+                const sala = await respuesta.json();
+
+                document.getElementById("codigo").value = sala.codigo;
+                document.getElementById("estado").textContent =
+                    `Sala creada: ${sala.codigo}. Introduce tu nombre y entra.`;
+            });
+
+        document.getElementById("entrar")
+            .addEventListener("click", async () => {
+                const codigo =
+                    document.getElementById("codigo").value;
+
+                nombreManager =
+                    document.getElementById("nombre").value;
+
+                if (!conectado) {
+                    await connection.start();
+                    await connection.invoke("UnirseSala", codigo);
+                    conectado = true;
+                }
+
+                const respuesta = await fetch(
+                    `/api/Sala/${codigo}/entrar?nombre=${encodeURIComponent(nombreManager)}`,
+                    { method: "POST" }
+                );
+
+                if (!respuesta.ok) {
+                    document.getElementById("estado").textContent =
+                        "No se pudo entrar en la sala";
+                    return;
+                }
+
+                const manager = await respuesta.json();
+
+                managerId = manager.id;
+
+                document.getElementById("presupuesto").textContent =
+                    `Presupuesto: ${manager.presupuesto} millones`;
+
+                document.getElementById("iniciarSubasta").disabled = false;
+
+                document.getElementById("estado").textContent =
+                    `${manager.nombre} conectado a la sala ${codigo}`;
+
+                document.getElementById("entrar").disabled = true;
+            });
 
         document.getElementById("iniciarSubasta")
             .addEventListener("click", async () => {
                 const codigo =
                     document.getElementById("codigo").value;
-
-                document.getElementById("iniciarSubasta").disabled = true;
 
                 const respuesta = await fetch(
                     `/api/Sala/${codigo}/subasta/iniciar`,
@@ -60,73 +165,26 @@
                     const error = await respuesta.text();
                     alert(error);
                 }
-
-                document.getElementById("iniciarSubasta").disabled = false;
             });
 
-        connection.on("SubastaSinPujas", () => {
-            document.getElementById("puja").textContent =
-                "La subasta terminó sin pujas";
-        });
+        document.getElementById("pujar")
+            .addEventListener("click", async () => {
+                const codigo =
+                    document.getElementById("codigo").value;
 
-        connection.on("SubastaIniciada", subasta => {
-            document.getElementById("puja").textContent =
-                `Se subasta: ${subasta.pilotoActual.nombre} | Puja: 0 millones`;
-        });
+                const cantidad =
+                    document.getElementById("cantidad").value;
 
-        connection.on("PujaActualizada", subasta => {
-            document.getElementById("puja").textContent =
-                `Se subasta: ${subasta.pilotoActual.nombre} | Puja: ${subasta.pujaActual} millones`;
-        });
+                const respuesta = await fetch(
+                    `/api/Sala/${codigo}/subasta/pujar?managerId=${managerId}&cantidad=${cantidad}`,
+                    { method: "POST" }
+                );
 
-        connection.on("SubastaFinalizada", resultado => {
-            document.getElementById("puja").textContent =
-                `${resultado.ganador} consigue a ${resultado.piloto} por ${resultado.precio} millones`;
-        });
-
-        document.getElementById("crearSala").addEventListener("click", async () => {
-            const respuesta = await fetch("/api/Sala/crear", {
-                method: "POST"
+                if (!respuesta.ok) {
+                    const error = await respuesta.text();
+                    alert(error);
+                }
             });
-
-            const sala = await respuesta.json();
-
-            document.getElementById("codigo").value = sala.codigo;
-            document.getElementById("estado").textContent =
-                `Sala creada: ${sala.codigo}. Introduce tu nombre y entra.`;
-        });
-
-        document.getElementById("entrar").addEventListener("click", async () => {
-            const codigo = document.getElementById("codigo").value;
-            const nombre = document.getElementById("nombre").value;
-
-            await connection.start();
-            await connection.invoke("UnirseSala", codigo);
-
-            const respuesta = await fetch(
-                `/api/Sala/${codigo}/entrar?nombre=${encodeURIComponent(nombre)}`,
-                { method: "POST" }
-            );
-
-            if (!respuesta.ok) {
-                document.getElementById("estado").textContent =
-                    "No se pudo entrar en la sala";
-                return;
-            }
-
-
-            const manager = await respuesta.json();
-            managerId = manager.id;
-            document.getElementById("iniciarSubasta").disabled = false;
-
-            document.getElementById("estado").textContent =
-                `${manager.nombre} conectado a la sala ${codigo}`;
-        });
-
-        connection.on("CronometroActualizado", segundos => {
-            document.getElementById("estado").textContent =
-                `Tiempo restante: ${segundos} segundos`;
-        });
     </script>
 </body>
 </html>
