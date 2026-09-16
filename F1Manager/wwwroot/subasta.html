@@ -1,35 +1,106 @@
 ﻿<!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Subasta F1</title>
+    <title>Mercado de pilotos</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 30px;
+        }
+
+        table {
+            border-collapse: collapse;
+            margin-top: 20px;
+            width: 100%;
+        }
+
+        th,
+        td {
+            border: 1px solid #ccc;
+            padding: 10px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        input,
+        button {
+            margin: 5px;
+            padding: 8px;
+        }
+
+            button:disabled {
+                cursor: not-allowed;
+            }
+
+        #subastaActual {
+            font-weight: bold;
+            font-size: 18px;
+        }
+    </style>
 </head>
+
 <body>
-    <h1>Subasta</h1>
+    <h1>Mercado de pilotos</h1>
 
-    <button id="crearSala">Crear sala</button>
-
-    <input id="codigo" placeholder="Código de sala">
-    <input id="nombre" placeholder="Nombre del manager">
-
-    <button id="entrar">Entrar en la sala</button>
-
-    <p id="estado">Sin conectar</p>
-    <p id="puja">Puja actual: -</p>
-    <p id="presupuesto">Presupuesto: -</p>
-
-    <h2>Managers</h2>
-    <ul id="managers"></ul>
-
-    <button id="iniciarSubasta" disabled>
-        Iniciar subasta
+    <button id="crearSala">
+        Crear sala
     </button>
 
-    <br><br>
+    <input id="codigo"
+           placeholder="Código de sala">
+
+    <input id="nombre"
+           placeholder="Nombre del manager">
+
+    <button id="entrar">
+        Entrar en la sala
+    </button>
+
+    <p id="estado">
+        Sin conectar
+    </p>
+
+    <p id="presupuesto">
+        Presupuesto: -
+    </p>
+
+    <h2>Managers</h2>
+
+    <ul id="managers"></ul>
+
+    <h2>Mercado de pilotos</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Piloto</th>
+                <th>Precio inicial</th>
+                <th>Puja actual</th>
+                <th>Estado</th>
+                <th>Comprado por</th>
+                <th>Tiempo</th>
+                <th>Acción</th>
+            </tr>
+        </thead>
+
+        <tbody id="pilotos"></tbody>
+    </table>
+
+    <h2>Subasta actual</h2>
+
+    <p id="subastaActual">
+        Sin subasta activa
+    </p>
 
     <input id="cantidad"
            type="number"
-           placeholder="Cantidad de la puja"
+           min="1"
+           placeholder="Cantidad en millones"
            disabled>
 
     <button id="pujar" disabled>
@@ -41,148 +112,385 @@
     <script>
         let managerId = null;
         let nombreManager = "";
+        let codigoSala = "";
         let conectado = false;
 
-        const connection = new signalR.HubConnectionBuilder()
-            .withUrl("/salaHub")
-            .build();
+        let pilotos = [];
+        let subastaActual = null;
+
+        const estadosCompra = {
+            0: "Disponible",
+            1: "En subasta",
+            2: "Comprado"
+        };
+
+        const connection =
+            new signalR.HubConnectionBuilder()
+                .withUrl("/salaHub")
+                .build();
+
+        function obtenerNombreEstado(estado) {
+            if (typeof estado === "number") {
+                return estadosCompra[estado];
+            }
+
+            return estado;
+        }
+
+        function actualizarSubastaActual() {
+            const panel =
+                document.getElementById("subastaActual");
+
+            const inputCantidad =
+                document.getElementById("cantidad");
+
+            const botonPujar =
+                document.getElementById("pujar");
+
+            if (!subastaActual ||
+                !subastaActual.activa ||
+                !subastaActual.pilotoActual) {
+                panel.textContent =
+                    "Sin subasta activa";
+
+                inputCantidad.disabled = true;
+                botonPujar.disabled = true;
+                inputCantidad.value = "";
+
+                return;
+            }
+
+            const pujaMinima =
+                subastaActual.pujaActual === 0
+                    ? subastaActual.precioInicial
+                    : subastaActual.pujaActual + 1;
+
+            panel.textContent =
+                `Piloto: ${subastaActual.pilotoActual.nombre} | ` +
+                `Puja mínima: ${pujaMinima} millones | ` +
+                `Tiempo restante: ${subastaActual.segundosRestantes} segundos`;
+
+            inputCantidad.min = pujaMinima;
+            inputCantidad.disabled = false;
+            botonPujar.disabled = false;
+        }
+
+        function renderizarMercado() {
+            const tabla =
+                document.getElementById("pilotos");
+
+            tabla.innerHTML = "";
+
+            pilotos.forEach(piloto => {
+                const estado =
+                    obtenerNombreEstado(piloto.estadoCompra);
+
+                const subastaDeEstePiloto =
+                    subastaActual &&
+                    subastaActual.activa &&
+                    subastaActual.pilotoActual &&
+                    subastaActual.pilotoActual.id === piloto.id;
+
+                let accion = "-";
+
+                if (estado === "Disponible" &&
+                    !subastaActual?.activa) {
+                    accion =
+                        `<button data-piloto-id="${piloto.id}">
+                                Poner en subasta
+                             </button>`;
+                }
+                else if (subastaDeEstePiloto) {
+                    accion = "Subasta activa";
+                }
+                else if (estado === "Comprado") {
+                    accion = "Adjudicado";
+                }
+
+                const pujaActual =
+                    piloto.pujaActual > 0
+                        ? `${piloto.pujaActual} millones`
+                        : "-";
+
+                const tiempo =
+                    subastaDeEstePiloto
+                        ? `${subastaActual.segundosRestantes} segundos`
+                        : "-";
+
+                tabla.innerHTML += `
+                        <tr>
+                            <td>
+                                ${piloto.nombre}
+                            </td>
+
+                            <td>
+                                ${piloto.precioInicial} millones
+                            </td>
+
+                            <td>
+                                ${pujaActual}
+                            </td>
+
+                            <td>
+                                ${estado}
+                            </td>
+
+                            <td>
+                                ${piloto.compradoPor || "-"}
+                            </td>
+
+                            <td>
+                                ${tiempo}
+                            </td>
+
+                            <td>
+                                ${accion}
+                            </td>
+                        </tr>
+                    `;
+            });
+
+            actualizarSubastaActual();
+        }
+
+        async function cargarMercado() {
+            const respuesta = await fetch(
+                `/api/Sala/${encodeURIComponent(codigoSala)}/pilotos`
+            );
+
+            if (!respuesta.ok) {
+                document.getElementById("estado").textContent =
+                    "No se pudo cargar el mercado.";
+
+                return;
+            }
+
+            pilotos = await respuesta.json();
+
+            renderizarMercado();
+        }
+
+        async function iniciarSubasta(pilotoId) {
+            const respuesta = await fetch(
+                `/api/Sala/${encodeURIComponent(codigoSala)}` +
+                `/subasta/iniciar?pilotoId=${encodeURIComponent(pilotoId)}`,
+                {
+                    method: "POST"
+                }
+            );
+
+            if (!respuesta.ok) {
+                alert(await respuesta.text());
+            }
+        }
 
         connection.on("ManagersActualizados", managers => {
-            const lista = document.getElementById("managers");
+            const lista =
+                document.getElementById("managers");
+
             lista.innerHTML = "";
 
             managers.forEach(manager => {
-                lista.innerHTML += `<li>${manager.nombre}</li>`;
+                const elemento =
+                    document.createElement("li");
+
+                elemento.textContent =
+                    manager.nombre;
+
+                lista.appendChild(elemento);
             });
         });
 
-        connection.on("SubastaIniciada", subasta => {
-            document.getElementById("puja").textContent =
-                `Se subasta: ${subasta.pilotoActual.nombre} | Puja: 0 millones`;
+        connection.on("MercadoActualizado", mercado => {
+            pilotos = mercado;
 
-            document.getElementById("cantidad").disabled = false;
-            document.getElementById("pujar").disabled = false;
-            document.getElementById("iniciarSubasta").disabled = true;
+            renderizarMercado();
+        });
+
+        connection.on("SubastaIniciada", subasta => {
+            subastaActual = subasta;
+
+            document.getElementById("estado").textContent =
+                "Subasta iniciada.";
+
+            renderizarMercado();
         });
 
         connection.on("PujaActualizada", subasta => {
-            document.getElementById("puja").textContent =
-                `Se subasta: ${subasta.pilotoActual.nombre} | Puja: ${subasta.pujaActual} millones`;
+            subastaActual = subasta;
+
+            renderizarMercado();
         });
 
         connection.on("CronometroActualizado", segundos => {
-            document.getElementById("estado").textContent =
-                `Tiempo restante: ${segundos} segundos`;
+            if (subastaActual) {
+                subastaActual.segundosRestantes =
+                    segundos;
+
+                renderizarMercado();
+            }
         });
 
         connection.on("SubastaSinPujas", () => {
-            document.getElementById("puja").textContent =
-                "La subasta terminó sin pujas";
+            if (subastaActual) {
+                subastaActual.activa = false;
+            }
 
-            document.getElementById("cantidad").disabled = true;
-            document.getElementById("pujar").disabled = true;
-            document.getElementById("iniciarSubasta").disabled = false;
+            document.getElementById("estado").textContent =
+                "La subasta terminó sin pujas.";
+
+            renderizarMercado();
         });
 
         connection.on("SubastaFinalizada", resultado => {
-            document.getElementById("puja").textContent =
-                `${resultado.ganador} consigue a ${resultado.piloto} por ${resultado.precio} millones`;
+            if (subastaActual) {
+                subastaActual.activa = false;
+            }
+
+            document.getElementById("estado").textContent =
+                `${resultado.ganador} ha ganado la subasta de ` +
+                `${resultado.piloto} por ` +
+                `${resultado.precio} millones.`;
 
             if (resultado.ganador === nombreManager) {
                 document.getElementById("presupuesto").textContent =
-                    `Presupuesto restante: ${resultado.presupuestoRestante} millones`;
+                    `Presupuesto restante: ` +
+                    `${resultado.presupuestoRestante} millones`;
             }
 
-            document.getElementById("cantidad").disabled = true;
-            document.getElementById("pujar").disabled = true;
-            document.getElementById("iniciarSubasta").disabled = false;
+            renderizarMercado();
         });
 
         document.getElementById("crearSala")
             .addEventListener("click", async () => {
-                const respuesta = await fetch("/api/Sala/crear", {
-                    method: "POST"
-                });
+                const respuesta = await fetch(
+                    "/api/Sala/crear",
+                    {
+                        method: "POST"
+                    }
+                );
 
-                const sala = await respuesta.json();
+                const sala =
+                    await respuesta.json();
 
-                document.getElementById("codigo").value = sala.codigo;
+                document.getElementById("codigo").value =
+                    sala.codigo;
+
                 document.getElementById("estado").textContent =
-                    `Sala creada: ${sala.codigo}. Introduce tu nombre y entra.`;
+                    `Sala creada: ${sala.codigo}. ` +
+                    "Introduce tu nombre y entra.";
             });
 
         document.getElementById("entrar")
             .addEventListener("click", async () => {
-                const codigo =
-                    document.getElementById("codigo").value;
+                codigoSala =
+                    document.getElementById("codigo")
+                        .value
+                        .trim();
 
                 nombreManager =
-                    document.getElementById("nombre").value;
+                    document.getElementById("nombre")
+                        .value
+                        .trim();
+
+                if (!codigoSala || !nombreManager) {
+                    alert(
+                        "Introduce el código de sala y tu nombre."
+                    );
+
+                    return;
+                }
 
                 if (!conectado) {
                     await connection.start();
-                    await connection.invoke("UnirseSala", codigo);
+
+                    await connection.invoke(
+                        "UnirseSala",
+                        codigoSala
+                    );
+
                     conectado = true;
                 }
 
                 const respuesta = await fetch(
-                    `/api/Sala/${codigo}/entrar?nombre=${encodeURIComponent(nombreManager)}`,
-                    { method: "POST" }
+                    `/api/Sala/${encodeURIComponent(codigoSala)}` +
+                    `/entrar?nombre=${encodeURIComponent(nombreManager)}`,
+                    {
+                        method: "POST"
+                    }
                 );
 
                 if (!respuesta.ok) {
                     document.getElementById("estado").textContent =
-                        "No se pudo entrar en la sala";
+                        await respuesta.text();
+
                     return;
                 }
 
-                const manager = await respuesta.json();
+                const manager =
+                    await respuesta.json();
 
                 managerId = manager.id;
 
                 document.getElementById("presupuesto").textContent =
                     `Presupuesto: ${manager.presupuesto} millones`;
 
-                document.getElementById("iniciarSubasta").disabled = false;
-
                 document.getElementById("estado").textContent =
-                    `${manager.nombre} conectado a la sala ${codigo}`;
+                    `${manager.nombre} conectado a la sala ` +
+                    `${codigoSala}.`;
 
-                document.getElementById("entrar").disabled = true;
+                document.getElementById("entrar").disabled =
+                    true;
+
+                await cargarMercado();
             });
 
-        document.getElementById("iniciarSubasta")
-            .addEventListener("click", async () => {
-                const codigo =
-                    document.getElementById("codigo").value;
+        document.getElementById("pilotos")
+            .addEventListener("click", async event => {
+                const boton =
+                    event.target.closest(
+                        "[data-piloto-id]"
+                    );
 
-                const respuesta = await fetch(
-                    `/api/Sala/${codigo}/subasta/iniciar`,
-                    { method: "POST" }
-                );
-
-                if (!respuesta.ok) {
-                    const error = await respuesta.text();
-                    alert(error);
+                if (!boton) {
+                    return;
                 }
+
+                boton.disabled = true;
+
+                await iniciarSubasta(
+                    boton.dataset.pilotoId
+                );
             });
 
         document.getElementById("pujar")
             .addEventListener("click", async () => {
-                const codigo =
-                    document.getElementById("codigo").value;
-
                 const cantidad =
-                    document.getElementById("cantidad").value;
+                    Number(
+                        document.getElementById("cantidad")
+                            .value
+                    );
+
+                if (!Number.isInteger(cantidad) ||
+                    cantidad <= 0) {
+                    alert(
+                        "Introduce una cantidad válida."
+                    );
+
+                    return;
+                }
 
                 const respuesta = await fetch(
-                    `/api/Sala/${codigo}/subasta/pujar?managerId=${managerId}&cantidad=${cantidad}`,
-                    { method: "POST" }
+                    `/api/Sala/${encodeURIComponent(codigoSala)}` +
+                    `/subasta/pujar?managerId=${encodeURIComponent(managerId)}` +
+                    `&cantidad=${encodeURIComponent(cantidad)}`,
+                    {
+                        method: "POST"
+                    }
                 );
 
                 if (!respuesta.ok) {
-                    const error = await respuesta.text();
-                    alert(error);
+                    alert(await respuesta.text());
                 }
             });
     </script>
