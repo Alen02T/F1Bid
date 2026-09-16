@@ -10,6 +10,9 @@ namespace F1Manager.Controllers;
 [Route("api/[controller]")]
 public class SalaController : ControllerBase
 {
+    private const int DuracionSubastaSegundos = 30;
+    private const int IncrementoMinimo = 1;
+
     private readonly SalaService _salaService;
     private readonly IHubContext<SalaHub> _salaHub;
 
@@ -39,19 +42,29 @@ public class SalaController : ControllerBase
         if (sala == null)
             return NotFound("La sala no existe.");
 
-        if (sala.Managers.Count >= sala.MaximoManagers)
-            return BadRequest("La sala está llena.");
+        if (string.IsNullOrWhiteSpace(nombre))
+            return BadRequest("El nombre es obligatorio.");
 
-        Manager manager = new()
+        Manager manager;
+
+        lock (sala)
         {
-            Nombre = nombre
-        };
+            if (sala.Managers.Count >= sala.MaximoManagers)
+                return BadRequest("La sala está llena.");
 
-        sala.Managers.Add(manager);
+            manager = new Manager
+            {
+                Nombre = nombre.Trim()
+            };
+
+            sala.Managers.Add(manager);
+        }
 
         await _salaHub.Clients
             .Group(codigo.ToUpper())
             .SendAsync("ManagersActualizados", sala.Managers);
+
+        await NotificarMercado(codigo, sala);
 
         return Ok(manager);
     }
@@ -67,68 +80,95 @@ public class SalaController : ControllerBase
         return Ok(sala);
     }
 
-    [HttpPost("{codigo}/subasta/iniciar")]
-    public async Task<IActionResult> IniciarSubasta(string codigo)
+    [HttpGet("{codigo}/pilotos")]
+    public IActionResult ObtenerPilotos(string codigo)
     {
         var sala = _salaService.ObtenerSala(codigo);
 
         if (sala == null)
             return NotFound("La sala no existe.");
 
-        if (sala.Subasta.Activa)
-            return BadRequest("Ya existe una subasta activa.");
+        return Ok(sala.Pilotos);
+    }
 
-        if (sala.PilotosDisponibles.Count == 0)
-            return BadRequest("No quedan pilotos disponibles.");
+    [HttpPost("{codigo}/subasta/iniciar")]
+    public async Task<IActionResult> IniciarSubasta(
+        string codigo,
+        Guid pilotoId)
+    {
+        var sala = _salaService.ObtenerSala(codigo);
 
-        int indiceAleatorio =
-            Random.Shared.Next(sala.PilotosDisponibles.Count);
+        if (sala == null)
+            return NotFound("La sala no existe.");
 
-        Piloto pilotoElegido =
-            sala.PilotosDisponibles[indiceAleatorio];
-
-        sala.Subasta = new Subasta
+        lock (sala)
         {
-            PilotoActual = pilotoElegido,
-            PujaActual = 0,
-            ManagerGanadorId = null,
-            Activa = true,
-            SegundosRestantes = 10
-        };
+            if (sala.Subasta.Activa)
+                return BadRequest(
+                    "Ya existe una subasta activa.");
+
+            var pilotoSeleccionado = sala.PilotosDisponibles
+                .FirstOrDefault(p => p.Id == pilotoId);
+
+            if (pilotoSeleccionado == null)
+                return BadRequest(
+                    "El piloto no está disponible.");
+
+            pilotoSeleccionado.EstadoCompra =
+                EstadoCompra.EnSubasta;
+
+            pilotoSeleccionado.PujaActual = 0;
+            pilotoSeleccionado.CompradoPor = null;
+
+            sala.Subasta = new Subasta
+            {
+                PilotoActual = pilotoSeleccionado,
+                PrecioInicial = pilotoSeleccionado.PrecioInicial,
+                PujaActual = 0,
+                ManagerGanadorId = null,
+                ManagerGanadorNombre = null,
+                Activa = true,
+                SegundosRestantes = DuracionSubastaSegundos
+            };
+        }
 
         await _salaHub.Clients
             .Group(codigo.ToUpper())
             .SendAsync("SubastaIniciada", sala.Subasta);
 
-        while (sala.Subasta.SegundosRestantes > 0 &&
-               sala.Subasta.Activa)
+        await NotificarMercado(codigo, sala);
+
+        while (true)
         {
             await Task.Delay(1000);
 
-            sala.Subasta.SegundosRestantes--;
+            int segundosRestantes;
+            bool debeFinalizar;
+
+            lock (sala)
+            {
+                if (!sala.Subasta.Activa)
+                    return Ok(sala);
+
+                sala.Subasta.SegundosRestantes--;
+
+                segundosRestantes =
+                    sala.Subasta.SegundosRestantes;
+
+                debeFinalizar = segundosRestantes <= 0;
+            }
 
             await _salaHub.Clients
                 .Group(codigo.ToUpper())
                 .SendAsync(
                     "CronometroActualizado",
-                    sala.Subasta.SegundosRestantes);
+                    segundosRestantes);
+
+            if (debeFinalizar)
+                break;
         }
 
-        if (!sala.Subasta.Activa)
-            return Ok(sala);
-
-        if (sala.Subasta.ManagerGanadorId == null)
-        {
-            sala.Subasta.Activa = false;
-
-            await _salaHub.Clients
-                .Group(codigo.ToUpper())
-                .SendAsync("SubastaSinPujas");
-
-            return Ok(sala.Subasta);
-        }
-
-        return await CerrarSubasta(codigo);
+        return await FinalizarSubasta(sala, codigo);
     }
 
     [HttpPost("{codigo}/subasta/pujar")]
@@ -142,73 +182,179 @@ public class SalaController : ControllerBase
         if (sala == null)
             return NotFound("La sala no existe.");
 
-        if (!sala.Subasta.Activa)
-            return BadRequest("No hay una subasta activa.");
+        Manager? manager;
+        Subasta subasta;
 
-        var manager = sala.Managers
-            .FirstOrDefault(m => m.Id == managerId);
+        lock (sala)
+        {
+            if (!sala.Subasta.Activa)
+                return BadRequest(
+                    "No hay una subasta activa.");
 
-        if (manager == null)
-            return NotFound("El manager no existe.");
+            manager = sala.Managers
+                .FirstOrDefault(m => m.Id == managerId);
 
-        if (cantidad <= sala.Subasta.PujaActual)
-            return BadRequest("La puja debe superar la actual.");
+            if (manager == null)
+                return NotFound(
+                    "El manager no existe.");
 
-        if (cantidad > manager.Presupuesto)
-            return BadRequest("No tienes suficiente presupuesto.");
+            int pujaMinima = sala.Subasta.PujaActual == 0
+                ? sala.Subasta.PrecioInicial
+                : sala.Subasta.PujaActual + IncrementoMinimo;
 
-        sala.Subasta.PujaActual = cantidad;
-        sala.Subasta.ManagerGanadorId = manager.Id;
+            if (cantidad < pujaMinima)
+            {
+                return BadRequest(
+                    $"La puja mínima es de " +
+                    $"{pujaMinima} millones.");
+            }
+
+            if (cantidad > manager.Presupuesto)
+                return BadRequest(
+                    "No tienes suficiente presupuesto.");
+
+            sala.Subasta.PujaActual = cantidad;
+            sala.Subasta.ManagerGanadorId = manager.Id;
+            sala.Subasta.ManagerGanadorNombre = manager.Nombre;
+
+            if (sala.Subasta.PilotoActual != null)
+            {
+                sala.Subasta.PilotoActual.PujaActual =
+                    cantidad;
+            }
+
+            subasta = sala.Subasta;
+        }
 
         await _salaHub.Clients
             .Group(codigo.ToUpper())
-            .SendAsync("PujaActualizada", sala.Subasta);
+            .SendAsync("PujaActualizada", subasta);
 
-        return Ok(sala.Subasta);
+        await NotificarMercado(codigo, sala);
+
+        return Ok(subasta);
     }
 
     [HttpPost("{codigo}/subasta/cerrar")]
-    public async Task<IActionResult> CerrarSubasta(string codigo)
+    public async Task<IActionResult> CerrarSubasta(
+        string codigo)
     {
         var sala = _salaService.ObtenerSala(codigo);
 
         if (sala == null)
             return NotFound("La sala no existe.");
 
-        if (!sala.Subasta.Activa)
-            return BadRequest("No hay una subasta activa.");
-
-        if (sala.Subasta.ManagerGanadorId == null)
-            return BadRequest("Todavía no se ha realizado ninguna puja.");
-
-        var ganador = sala.Managers
-            .FirstOrDefault(m =>
-                m.Id == sala.Subasta.ManagerGanadorId);
-
-        if (ganador == null ||
-            sala.Subasta.PilotoActual == null)
+        lock (sala)
         {
-            return BadRequest("No se pudo determinar el ganador.");
+            if (!sala.Subasta.Activa)
+                return BadRequest(
+                    "No hay una subasta activa.");
+
+            if (sala.Subasta.ManagerGanadorId == null)
+            {
+                return BadRequest(
+                    "Todavía no se ha realizado " +
+                    "ninguna puja.");
+            }
         }
 
-        ganador.Presupuesto -= sala.Subasta.PujaActual;
-        ganador.Pilotos.Add(sala.Subasta.PilotoActual);
+        return await FinalizarSubasta(sala, codigo);
+    }
 
-        sala.PilotosDisponibles.Remove(
-            sala.Subasta.PilotoActual);
+    private async Task<IActionResult> FinalizarSubasta(
+        Sala sala,
+        string codigo)
+    {
+        Piloto piloto;
+        Manager? ganador = null;
+        int precioFinal = 0;
+        bool sinPujas = false;
 
-        sala.Subasta.Activa = false;
+        lock (sala)
+        {
+            if (!sala.Subasta.Activa)
+                return Ok(sala);
+
+            var pilotoActual =
+                sala.Subasta.PilotoActual;
+
+            if (pilotoActual == null)
+                return BadRequest(
+                    "No se pudo determinar el piloto.");
+
+            piloto = pilotoActual;
+
+            if (sala.Subasta.ManagerGanadorId == null)
+            {
+                piloto.EstadoCompra =
+                    EstadoCompra.Disponible;
+
+                piloto.PujaActual = 0;
+                piloto.CompradoPor = null;
+
+                sala.Subasta.Activa = false;
+                sinPujas = true;
+            }
+            else
+            {
+                ganador = sala.Managers
+                    .FirstOrDefault(m =>
+                        m.Id == sala.Subasta.ManagerGanadorId);
+
+                if (ganador == null)
+                    return BadRequest(
+                        "No se pudo determinar el ganador.");
+
+                precioFinal = sala.Subasta.PujaActual;
+
+                ganador.Presupuesto -= precioFinal;
+                ganador.Pilotos.Add(piloto);
+
+                piloto.EstadoCompra =
+                    EstadoCompra.Comprado;
+
+                piloto.CompradoPor = ganador.Nombre;
+                piloto.PujaActual = precioFinal;
+
+                sala.Subasta.Activa = false;
+            }
+        }
+
+        if (sinPujas)
+        {
+            await _salaHub.Clients
+                .Group(codigo.ToUpper())
+                .SendAsync("SubastaSinPujas");
+
+            await NotificarMercado(codigo, sala);
+
+            return Ok(sala.Subasta);
+        }
 
         await _salaHub.Clients
             .Group(codigo.ToUpper())
             .SendAsync("SubastaFinalizada", new
             {
-                Piloto = sala.Subasta.PilotoActual.Nombre,
-                Ganador = ganador.Nombre,
-                Precio = sala.Subasta.PujaActual,
-                PresupuestoRestante = ganador.Presupuesto
+                Piloto = piloto.Nombre,
+                Ganador = ganador!.Nombre,
+                Precio = precioFinal,
+                PresupuestoRestante =
+                    ganador.Presupuesto
             });
 
+        await NotificarMercado(codigo, sala);
+
         return Ok(sala);
+    }
+
+    private Task NotificarMercado(
+        string codigo,
+        Sala sala)
+    {
+        return _salaHub.Clients
+            .Group(codigo.ToUpper())
+            .SendAsync(
+                "MercadoActualizado",
+                sala.Pilotos);
     }
 }
