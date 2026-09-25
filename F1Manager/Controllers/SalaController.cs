@@ -332,15 +332,18 @@ public class SalaController : ControllerBase
         }
 
         await _salaHub.Clients
+    .Group(codigo.ToUpper())
+    .SendAsync("SubastaFinalizada", new
+    {
+        Piloto = piloto.Nombre,
+        Ganador = ganador!.Nombre,
+        Precio = precioFinal,
+        PresupuestoRestante = ganador.Presupuesto
+    });
+
+        await _salaHub.Clients
             .Group(codigo.ToUpper())
-            .SendAsync("SubastaFinalizada", new
-            {
-                Piloto = piloto.Nombre,
-                Ganador = ganador!.Nombre,
-                Precio = precioFinal,
-                PresupuestoRestante =
-                    ganador.Presupuesto
-            });
+            .SendAsync("ManagersActualizados", sala.Managers);
 
         await NotificarMercado(codigo, sala);
 
