@@ -125,6 +125,22 @@
         Sin subasta activa
     </p>
 
+    <p id="liderSubasta">Sin pujas</p>
+
+    <div id="pujasRapidas">
+        <button type="button" data-extra="0" disabled>
+            Puja mínima
+        </button>
+
+        <button type="button" data-extra="5" disabled>
+            Mínima +5 M
+        </button>
+
+        <button type="button" data-extra="10" disabled>
+            Mínima +10 M
+        </button>
+    </div>
+
     <input id="cantidad"
            type="number"
            min="1"
@@ -166,41 +182,68 @@
         }
 
         function actualizarSubastaActual() {
-            const panel =
-                document.getElementById("subastaActual");
+            const panel = document.getElementById("subastaActual");
+            const lider = document.getElementById("liderSubasta");
+            const inputCantidad = document.getElementById("cantidad");
+            const botonPujar = document.getElementById("pujar");
 
-            const inputCantidad =
-                document.getElementById("cantidad");
+            const botonesRapidos = document.querySelectorAll(
+                "#pujasRapidas button"
+            );
 
-            const botonPujar =
-                document.getElementById("pujar");
+            const activa =
+                subastaActual?.activa &&
+                subastaActual?.pilotoActual;
 
-            if (!subastaActual ||
-                !subastaActual.activa ||
-                !subastaActual.pilotoActual) {
-                panel.textContent =
-                    "Sin subasta activa";
+            if (!activa) {
+                panel.textContent = "Sin subasta activa";
+                lider.textContent = "";
+                lider.style.color = "";
 
                 inputCantidad.disabled = true;
-                botonPujar.disabled = true;
                 inputCantidad.value = "";
+                botonPujar.disabled = true;
+
+                botonesRapidos.forEach(boton => {
+                    boton.disabled = true;
+                });
 
                 return;
             }
 
-            const pujaMinima =
-                subastaActual.pujaActual === 0
-                    ? subastaActual.precioInicial
-                    : subastaActual.pujaActual + 1;
+            const pujaMinima = subastaActual.pujaActual === 0
+                ? subastaActual.precioInicial
+                : subastaActual.pujaActual + 1;
+
+            const puedoParticipar =
+                managerId !== null &&
+                subastaActual.segundosRestantes > 0;
 
             panel.textContent =
                 `Piloto: ${subastaActual.pilotoActual.nombre} | ` +
+                `Puja actual: ${subastaActual.pujaActual} millones | ` +
                 `Puja mínima: ${pujaMinima} millones | ` +
-                `Tiempo restante: ${subastaActual.segundosRestantes} segundos`;
+                `Tiempo: ${subastaActual.segundosRestantes} segundos`;
 
             inputCantidad.min = pujaMinima;
-            inputCantidad.disabled = false;
-            botonPujar.disabled = false;
+            inputCantidad.disabled = !puedoParticipar;
+            botonPujar.disabled = !puedoParticipar;
+
+            botonesRapidos.forEach(boton => {
+                boton.disabled = !puedoParticipar;
+            });
+
+            if (!subastaActual.managerGanadorId) {
+                lider.textContent = "Todavía no hay pujas.";
+                lider.style.color = "";
+            } else if (subastaActual.managerGanadorId === managerId) {
+                lider.textContent = "Vas ganando la subasta.";
+                lider.style.color = "#15803d";
+            } else {
+                lider.textContent =
+                    `Va ganando: ${subastaActual.managerGanadorNombre}`;
+                lider.style.color = "";
+            }
         }
 
         function renderizarMercado() {
@@ -225,8 +268,8 @@
                     !subastaActual?.activa) {
                     accion =
                         `<button data-piloto-id="${piloto.id}">
-                                Poner en subasta
-                             </button>`;
+                                    Poner en subasta
+                                 </button>`;
                 }
                 else if (subastaDeEstePiloto) {
                     accion = "Subasta activa";
@@ -246,36 +289,36 @@
                         : "-";
 
                 tabla.innerHTML += `
-                        <tr>
-                            <td>
-                                ${piloto.nombre}
-                            </td>
+                            <tr>
+                                <td>
+                                    ${piloto.nombre}
+                                </td>
 
-                            <td>
-                                ${piloto.precioInicial} millones
-                            </td>
+                                <td>
+                                    ${piloto.precioInicial} millones
+                                </td>
 
-                            <td>
-                                ${pujaActual}
-                            </td>
+                                <td>
+                                    ${pujaActual}
+                                </td>
 
-                            <td>
-                                ${estado}
-                            </td>
+                                <td>
+                                    ${estado}
+                                </td>
 
-                            <td>
-                                ${piloto.compradoPor || "-"}
-                            </td>
+                                <td>
+                                    ${piloto.compradoPor || "-"}
+                                </td>
 
-                            <td>
-                                ${tiempo}
-                            </td>
+                                <td>
+                                    ${tiempo}
+                                </td>
 
-                            <td>
-                                ${accion}
-                            </td>
-                        </tr>
-                    `;
+                                <td>
+                                    ${accion}
+                                </td>
+                            </tr>
+                        `;
             });
 
             actualizarSubastaActual();
@@ -404,7 +447,24 @@
         });
 
         connection.on("PujaActualizada", subasta => {
+            const ibaGanando =
+                managerId !== null &&
+                subastaActual?.managerGanadorId === managerId;
+
             subastaActual = subasta;
+
+            const voyGanando =
+                managerId !== null &&
+                subasta.managerGanadorId === managerId;
+
+            if (voyGanando) {
+                document.getElementById("estado").textContent =
+                    "Puja aceptada. Vas ganando la subasta.";
+            } else if (ibaGanando) {
+                document.getElementById("estado").textContent =
+                    `${subasta.managerGanadorNombre} ha superado tu puja ` +
+                    `con ${subasta.pujaActual} millones.`;
+            }
 
             renderizarMercado();
         });
@@ -573,6 +633,28 @@
                 if (!respuesta.ok) {
                     alert(await respuesta.text());
                 }
+            });
+
+        document.getElementById("pujasRapidas")
+            .addEventListener("click", event => {
+                const boton = event.target.closest("button[data-extra]");
+
+                if (!boton ||
+                    boton.disabled ||
+                    !subastaActual?.activa ||
+                    subastaActual.segundosRestantes <= 0) {
+                    return;
+                }
+
+                const pujaMinima = subastaActual.pujaActual === 0
+                    ? subastaActual.precioInicial
+                    : subastaActual.pujaActual + 1;
+
+                const extra = Number(boton.dataset.extra);
+                const inputCantidad = document.getElementById("cantidad");
+
+                inputCantidad.value = pujaMinima + extra;
+                inputCantidad.focus();
             });
     </script>
 </body>
