@@ -151,6 +151,27 @@
         Pujar
     </button>
 
+    <h2>Historial de subastas</h2>
+
+    <p id="estadoHistorial">
+        Todavía no hay subastas terminadas.
+    </p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>N.º</th>
+                <th>Piloto</th>
+                <th>Resultado</th>
+                <th>Ganador</th>
+                <th>Precio final</th>
+                <th>Fecha</th>
+            </tr>
+        </thead>
+
+        <tbody id="historialSubastas"></tbody>
+    </table>
+
     <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
 
     <script>
@@ -268,8 +289,8 @@
                     !subastaActual?.activa) {
                     accion =
                         `<button data-piloto-id="${piloto.id}">
-                                    Poner en subasta
-                                 </button>`;
+                                        Poner en subasta
+                                     </button>`;
                 }
                 else if (subastaDeEstePiloto) {
                     accion = "Subasta activa";
@@ -289,36 +310,36 @@
                         : "-";
 
                 tabla.innerHTML += `
-                            <tr>
-                                <td>
-                                    ${piloto.nombre}
-                                </td>
+                                <tr>
+                                    <td>
+                                        ${piloto.nombre}
+                                    </td>
 
-                                <td>
-                                    ${piloto.precioInicial} millones
-                                </td>
+                                    <td>
+                                        ${piloto.precioInicial} millones
+                                    </td>
 
-                                <td>
-                                    ${pujaActual}
-                                </td>
+                                    <td>
+                                        ${pujaActual}
+                                    </td>
 
-                                <td>
-                                    ${estado}
-                                </td>
+                                    <td>
+                                        ${estado}
+                                    </td>
 
-                                <td>
-                                    ${piloto.compradoPor || "-"}
-                                </td>
+                                    <td>
+                                        ${piloto.compradoPor || "-"}
+                                    </td>
 
-                                <td>
-                                    ${tiempo}
-                                </td>
+                                    <td>
+                                        ${tiempo}
+                                    </td>
 
-                                <td>
-                                    ${accion}
-                                </td>
-                            </tr>
-                        `;
+                                    <td>
+                                        ${accion}
+                                    </td>
+                                </tr>
+                            `;
             });
 
             actualizarSubastaActual();
@@ -584,6 +605,7 @@
                     true;
 
                 await cargarMercado();
+                await cargarHistorial();
             });
 
         document.getElementById("pilotos")
@@ -656,6 +678,82 @@
                 inputCantidad.value = pujaMinima + extra;
                 inputCantidad.focus();
             });
+
+
+        const historialSubastas = new Map();
+
+        function renderizarHistorial() {
+            const tabla = document.getElementById("historialSubastas");
+            const estado = document.getElementById("estadoHistorial");
+
+            tabla.replaceChildren();
+
+            const registros = Array.from(historialSubastas.values())
+                .sort((a, b) => b.numero - a.numero);
+
+            estado.textContent = registros.length === 0
+                ? "Todavía no hay subastas terminadas."
+                : `Subastas terminadas: ${registros.length}`;
+
+            registros.forEach(registro => {
+                const fila = document.createElement("tr");
+                const sinPujas = registro.ganadorId === null;
+
+                const datos = [
+                    registro.numero,
+                    registro.piloto,
+                    sinPujas ? "Sin pujas" : "Adjudicado",
+                    registro.ganador ?? "—",
+                    sinPujas ? "—" : `${registro.precio} millones`,
+                    new Date(registro.fecha).toLocaleString("es-ES")
+                ];
+
+                datos.forEach(valor => {
+                    const celda = document.createElement("td");
+                    celda.textContent = valor;
+                    fila.appendChild(celda);
+                });
+
+                tabla.appendChild(fila);
+            });
+        }
+
+        async function cargarHistorial() {
+            try {
+                const respuesta = await fetch(
+                    `/api/Sala/${encodeURIComponent(codigoSala)}/historial`
+                );
+
+                if (!respuesta.ok) {
+                    throw new Error("No se pudo cargar el historial.");
+                }
+
+                const registros = await respuesta.json();
+
+                registros.forEach(registro => {
+                    historialSubastas.set(registro.id, registro);
+                });
+
+                renderizarHistorial();
+            } catch {
+                document.getElementById("estadoHistorial").textContent =
+                    "No se pudo cargar el historial. " +
+                    "Pulsa el botón para reintentar.";
+
+                const boton = document.createElement("button");
+                boton.type = "button";
+                boton.textContent = "Reintentar";
+                boton.addEventListener("click", cargarHistorial);
+
+                document.getElementById("estadoHistorial")
+                    .appendChild(boton);
+            }
+        }
+
+        connection.on("SubastaRegistrada", registro => {
+            historialSubastas.set(registro.id, registro);
+            renderizarHistorial();
+        });
     </script>
 </body>
 </html>
