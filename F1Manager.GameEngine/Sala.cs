@@ -11,6 +11,8 @@ public class Sala
     public int MaximoManagers { get; set; } = 6;
 
     public Subasta Subasta { get; set; } = new();
+    public List<RegistroSubasta> HistorialSubastas { get; set; } = new();
+
 
     public List<Piloto> Pilotos { get; set; } = new()
     {

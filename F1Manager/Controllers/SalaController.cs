@@ -262,92 +262,113 @@ public class SalaController : ControllerBase
     }
 
     private async Task<IActionResult> FinalizarSubasta(
-        Sala sala,
-        string codigo)
+    Sala sala,
+    string codigo)
     {
-        Piloto piloto;
-        Manager? ganador = null;
-        int precioFinal = 0;
-        bool sinPujas = false;
+        RegistroSubasta registro;
+        int? presupuestoRestante = null;
 
         lock (sala)
         {
             if (!sala.Subasta.Activa)
                 return Ok(sala);
 
-            var pilotoActual =
-                sala.Subasta.PilotoActual;
+            var piloto = sala.Subasta.PilotoActual;
 
-            if (pilotoActual == null)
-                return BadRequest(
-                    "No se pudo determinar el piloto.");
+            if (piloto == null)
+                return BadRequest("No se pudo determinar el piloto.");
 
-            piloto = pilotoActual;
+            Manager? ganador = null;
+            int? precioFinal = null;
 
             if (sala.Subasta.ManagerGanadorId == null)
             {
-                piloto.EstadoCompra =
-                    EstadoCompra.Disponible;
-
+                piloto.EstadoCompra = EstadoCompra.Disponible;
                 piloto.PujaActual = 0;
                 piloto.CompradoPor = null;
-
-                sala.Subasta.Activa = false;
-                sinPujas = true;
             }
             else
             {
-                ganador = sala.Managers
-                    .FirstOrDefault(m =>
-                        m.Id == sala.Subasta.ManagerGanadorId);
+                ganador = sala.Managers.FirstOrDefault(
+                    manager =>
+                        manager.Id == sala.Subasta.ManagerGanadorId);
 
                 if (ganador == null)
-                    return BadRequest(
-                        "No se pudo determinar el ganador.");
+                    return BadRequest("No se pudo determinar el ganador.");
 
                 precioFinal = sala.Subasta.PujaActual;
 
-                ganador.Presupuesto -= precioFinal;
+                ganador.Presupuesto -= precioFinal.Value;
                 ganador.Pilotos.Add(piloto);
 
-                piloto.EstadoCompra =
-                    EstadoCompra.Comprado;
+                presupuestoRestante = ganador.Presupuesto;
 
+                piloto.EstadoCompra = EstadoCompra.Comprado;
                 piloto.CompradoPor = ganador.Nombre;
-                piloto.PujaActual = precioFinal;
-
-                sala.Subasta.Activa = false;
+                piloto.PujaActual = precioFinal.Value;
             }
+
+            sala.Subasta.Activa = false;
+
+            registro = new RegistroSubasta
+            {
+                Numero = sala.HistorialSubastas.Count + 1,
+                PilotoId = piloto.Id,
+                Piloto = piloto.Nombre,
+                GanadorId = ganador?.Id,
+                Ganador = ganador?.Nombre,
+                Precio = precioFinal
+            };
+
+            sala.HistorialSubastas.Add(registro);
         }
 
-        if (sinPujas)
+        if (registro.GanadorId == null)
         {
             await _salaHub.Clients
                 .Group(codigo.ToUpper())
                 .SendAsync("SubastaSinPujas");
+        }
+        else
+        {
+            await _salaHub.Clients
+                .Group(codigo.ToUpper())
+                .SendAsync("SubastaFinalizada", new
+                {
+                    Piloto = registro.Piloto,
+                    Ganador = registro.Ganador,
+                    Precio = registro.Precio,
+                    PresupuestoRestante = presupuestoRestante
+                });
 
-            await NotificarMercado(codigo, sala);
-
-            return Ok(sala.Subasta);
+            await _salaHub.Clients
+                .Group(codigo.ToUpper())
+                .SendAsync("ManagersActualizados", sala.Managers);
         }
 
         await _salaHub.Clients
-    .Group(codigo.ToUpper())
-    .SendAsync("SubastaFinalizada", new
-    {
-        Piloto = piloto.Nombre,
-        Ganador = ganador!.Nombre,
-        Precio = precioFinal,
-        PresupuestoRestante = ganador.Presupuesto
-    });
-
-        await _salaHub.Clients
             .Group(codigo.ToUpper())
-            .SendAsync("ManagersActualizados", sala.Managers);
+            .SendAsync("SubastaRegistrada", registro);
 
         await NotificarMercado(codigo, sala);
 
         return Ok(sala);
+    }
+
+    [HttpGet("{codigo}/historial")]
+    public IActionResult ObtenerHistorial(string codigo)
+    {
+        var sala = _salaService.ObtenerSala(codigo);
+
+        if (sala == null)
+            return NotFound("La sala no existe.");
+
+        lock (sala)
+        {
+            return Ok(sala.HistorialSubastas
+                .OrderByDescending(registro => registro.Numero)
+                .ToList());
+        }
     }
 
     private Task NotificarMercado(
