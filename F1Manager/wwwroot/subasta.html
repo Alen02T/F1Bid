@@ -41,6 +41,34 @@
             font-weight: bold;
             font-size: 18px;
         }
+
+        #managers {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            padding: 0;
+            list-style: none;
+        }
+
+        .tarjeta-manager {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 16px;
+            min-width: 230px;
+        }
+
+            .tarjeta-manager.mi-manager {
+                border: 2px solid #2563eb;
+                background-color: #eff6ff;
+            }
+
+            .tarjeta-manager h3 {
+                margin-top: 0;
+            }
+
+            .tarjeta-manager ul {
+                padding-left: 20px;
+            }
     </style>
 </head>
 
@@ -283,24 +311,83 @@
                 alert(await respuesta.text());
             }
         }
+        let managersSala = [];
+
+        function renderizarManagers() {
+            const lista = document.getElementById("managers");
+            lista.replaceChildren();
+
+            managersSala.forEach(manager => {
+                const esMiManager = manager.id === managerId;
+                const pilotosComprados = manager.pilotos ?? [];
+
+                const totalGastado = pilotosComprados.reduce(
+                    (total, piloto) => total + piloto.pujaActual,
+                    0
+                );
+
+                const tarjeta = document.createElement("li");
+                tarjeta.className = "tarjeta-manager";
+
+                if (esMiManager) {
+                    tarjeta.classList.add("mi-manager");
+                }
+
+                const nombre = document.createElement("h3");
+                nombre.textContent = esMiManager
+                    ? `${manager.nombre} · Tú`
+                    : manager.nombre;
+
+                const presupuesto = document.createElement("p");
+                presupuesto.textContent =
+                    `Presupuesto restante: ${manager.presupuesto} millones`;
+
+                const gasto = document.createElement("p");
+                gasto.textContent =
+                    `Total gastado: ${totalGastado} millones`;
+
+                const tituloPilotos = document.createElement("strong");
+                tituloPilotos.textContent =
+                    `Pilotos adquiridos: ${pilotosComprados.length}`;
+
+                tarjeta.append(
+                    nombre,
+                    presupuesto,
+                    gasto,
+                    tituloPilotos
+                );
+
+                if (pilotosComprados.length === 0) {
+                    const mensaje = document.createElement("p");
+                    mensaje.textContent = "Sin pilotos";
+                    tarjeta.appendChild(mensaje);
+                } else {
+                    const listaPilotos = document.createElement("ul");
+
+                    pilotosComprados.forEach(piloto => {
+                        const elemento = document.createElement("li");
+                        elemento.textContent =
+                            `${piloto.nombre} — ${piloto.pujaActual} millones`;
+
+                        listaPilotos.appendChild(elemento);
+                    });
+
+                    tarjeta.appendChild(listaPilotos);
+                }
+
+                lista.appendChild(tarjeta);
+
+                if (esMiManager) {
+                    document.getElementById("presupuesto").textContent =
+                        `Presupuesto: ${manager.presupuesto} millones`;
+                }
+            });
+        }
 
         connection.on("ManagersActualizados", managers => {
-            const lista =
-                document.getElementById("managers");
-
-            lista.innerHTML = "";
-
-            managers.forEach(manager => {
-                const elemento =
-                    document.createElement("li");
-
-                elemento.textContent =
-                    manager.nombre;
-
-                lista.appendChild(elemento);
-            });
+            managersSala = managers;
+            renderizarManagers();
         });
-
         connection.on("MercadoActualizado", mercado => {
             pilotos = mercado;
 
@@ -349,14 +436,7 @@
 
             document.getElementById("estado").textContent =
                 `${resultado.ganador} ha ganado la subasta de ` +
-                `${resultado.piloto} por ` +
-                `${resultado.precio} millones.`;
-
-            if (resultado.ganador === nombreManager) {
-                document.getElementById("presupuesto").textContent =
-                    `Presupuesto restante: ` +
-                    `${resultado.presupuestoRestante} millones`;
-            }
+                `${resultado.piloto} por ${resultado.precio} millones.`;
 
             renderizarMercado();
         });
@@ -431,6 +511,7 @@
                     await respuesta.json();
 
                 managerId = manager.id;
+                renderizarManagers();
 
                 document.getElementById("presupuesto").textContent =
                     `Presupuesto: ${manager.presupuesto} millones`;
